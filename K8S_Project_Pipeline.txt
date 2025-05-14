@@ -1,0 +1,76 @@
+pipeline {
+    agent any
+    tools {
+        jdk 'jdk17'
+        nodejs 'node16'
+    }
+    environment {
+        SCANNER_HOME = tool 'mysonar'
+    }
+    stages {
+        stage ("Clean Workspace") {
+            steps {
+                cleanWs()
+            }
+        }
+        stage ("code") {
+            steps {
+                git "https://github.com/sanjaypkumar/k8s-project.git"
+            }
+        }
+        stage ("SonarQube Code Analysis") {
+            steps {
+                withSonarQubeEnv('mysonar') {
+                    sh ''' $SCANNER_HOME/bin/sonar-scanner -Dsonar.projectName=zomato \
+                    -Dsonar.projectKey=zomato '''
+                }
+            }
+        }
+        stage ("Quality Gate Analysis") {
+            steps {
+                script {
+                    waitForQualityGate abortPipeline: false, credentialsId: 'mysonar'
+                }
+            }
+        }
+        stage ("Install Dependency") {
+            steps {
+                sh 'npm install'
+            }
+        }
+        stage ("OWASP Dependency Check") {
+            steps {
+                dependencyCheck additionalArguments: '--scan ./ --disableYarnAudit --disableNodeAudit', odcInstallation: 'DP-Check'
+                dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
+            }
+        }
+        stage ("Trivy Scan") {
+            steps {
+                sh 'trivy fs . > trivyfs.txt'
+            }
+        }
+        stage ("Build Dockerfile") {
+            steps {
+                sh 'docker build -t image1 .'
+                sh 'docker tag image1 palleboinasanjaykumar/game'
+            }
+        }
+       stage ("push to docker") {
+           steps {
+                withDockerRegistry(url: 'https://index.docker.io/v1/', credentialsId: 'dockerhub') {
+                    sh 'docker push palleboinasanjaykumar/game'
+                }
+           }
+       }
+       stage ("Scan the image") {
+           steps {
+               sh 'trivy image palleboinasanjaykumar/game'
+           }
+       }
+       stage ("Deploy") {
+           steps {
+               sh 'docker run -d --name cont1 -p 3000:3000 palleboinasanjaykumar/game'
+           }
+       }
+    }
+}
